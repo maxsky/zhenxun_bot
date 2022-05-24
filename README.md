@@ -238,6 +238,50 @@ __Docker 最新版本由 [Sakuracio](https://github.com/Sakuracio) 提供__
 
 ## 更新
 
+### 2022/5/23 \[v0.1.5.6]
+
+* 修复"清除已删除插件数据" [@pull/545](https://github.com/HibiKier/zhenxun_bot/pull/545)
+* 修复有置顶的up主B站动态获取失败 [@pull/552](https://github.com/HibiKier/zhenxun_bot/pull/552)
+* 添加pixiv搜图多关键词支持;修复p站搜图数量参数问题 [@pull/441](https://github.com/HibiKier/zhenxun_bot/pull/441)
+* 修复开箱更新价格错误传参
+* 修复pix无法正确查询uid
+* 新增色图插件添加配置项ALLOW_GROUP_R18：允许群聊中使用色图r
+* 新增PIX插件添加配置项ALLOW_GROUP_SETU：允许非超级用户使用-s参数
+* 新增PIX插件添加配置项ALLOW_GROUP_R18：允许非超级用户使用-r参数
+
+### 2022/5/22 \[v0.1.5.4]
+
+* 使用action自动更新poetry.lock [@pull/515](https://github.com/HibiKier/zhenxun_bot/pull/515)
+* fix(bilibili_sub): card is None and timeout [@pull/516](https://github.com/HibiKier/zhenxun_bot/pull/516)
+* 修复了epic有时获取新免费游戏消息时获取不到图片
+* 修复好感度满时签到出错（虽然是不可能满的
+* 修复原神资源图标下载路径错误
+* 修复自动更新群组可能失败
+
+### 2022/5/21
+
+* 修复搜番无结果时报错无正确反馈
+* 解锁了windows上无法使用playwright的限制
+* 修复p搜对应pid有多张图时出错，改为连续发送图片
+* 修复p搜对数字的错误判断
+* 修复添加商品折扣无法正确添加
+* 修复了bilibili订阅直播间订阅up名称不一致的问题
+* 修复原神玩家查询没开地图时报错
+* 最低priority修改为 999
+* 修复刷屏检测失效
+* 修复刷屏检测设置命令无法生效
+* 优化刷屏显示设置禁言时长显示，并改为分钟
+* 修复了多连开箱无法指定武器箱
+* 修复识番链接无法正确获取
+* 新增真寻入群时即刻刷新权限
+* 提高了微博热搜截图的等待时间
+
+### 2022/5/19
+
+* fix: mihoyo bbs api changed [@pull/357](https://github.com/HibiKier/zhenxun_bot/pull/357)
+* Add word_clouds [@pull/265](https://github.com/HibiKier/zhenxun_bot/pull/265)
+* Fix wrong live streamer name [@pull/284](https://github.com/HibiKier/zhenxun_bot/pull/284)
+
 ### 2022/5/16
 
 * 词条支持图片和@问题 [@pull/160](https://github.com/HibiKier/zhenxun_bot/pull/160)
@@ -255,7 +299,7 @@ __Docker 最新版本由 [Sakuracio](https://github.com/Sakuracio) 提供__
 
 * fix: 更改p搜api，解决p搜无法使用的问题 [@pull/155](https://github.com/HibiKier/zhenxun_bot/pull/155)
 
-### 2022/5/9
+### 2022/5/9 \[v0.1.5.3]
 
 * 替换了疫情API
 * 修复了私聊.ban/.unban出错
@@ -511,4 +555,4 @@ __..... 更多更新信息请查看文档__
 [NothAmor / nonebot2_luxun_says](https://github.com/NothAmor/nonebot2_luxun_says) ：基于nonebot2机器人框架的鲁迅说插件  
 [Kyomotoi / AnimeThesaurus](https://github.com/Kyomotoi/AnimeThesaurus) ：一个~~特二刺螈~~（文爱）的适用于任何bot的词库  
 [Ailitonia / omega-miya](https://github.com/Ailitonia/omega-miya) ：基于nonebot2的qq机器人  
-[KimigaiiWuyi / GenshinUID]("https://github.com/KimigaiiWuyi/GenshinUID") ：一个基于HoshinoBot/NoneBot2的原神UID查询插件
+[KimigaiiWuyi / GenshinUID](https://github.com/KimigaiiWuyi/GenshinUID) ：一个基于HoshinoBot/NoneBot2的原神UID查询插件
