@@ -1,106 +1,106 @@
-from datetime import datetime, timedelta
-from models.sign_group_user import SignGroupUser
-from models.group_member_info import GroupInfoUser
-from models.bag_user import BagUser
-from configs.config import NICKNAME
-from nonebot.adapters.onebot.v11 import MessageSegment
-from utils.image_utils import BuildImage, BuildMat
-from services.db_context import db
-from .utils import get_card, SIGN_TODAY_CARD_PATH
-from typing import Optional
-from services.log import logger
-from .random_event import random_event
-from utils.data_utils import init_rank
-from utils.utils import get_user_avatar
-from io import BytesIO
-import random
-import math
 import asyncio
-import secrets
+import math
 import os
+import random
+import secrets
+from datetime import datetime, timedelta
+from io import BytesIO
+from typing import Optional
+
+from nonebot.adapters.onebot.v11 import MessageSegment
+
+from configs.config import NICKNAME
+from models.bag_user import BagUser
+from models.group_member_info import GroupInfoUser
+from models.sign_group_user import SignGroupUser
+from services.log import logger
+from utils.data_utils import init_rank
+from utils.image_utils import BuildImage, BuildMat
+from utils.utils import get_user_avatar
+
+from .random_event import random_event
+from .utils import SIGN_TODAY_CARD_PATH, get_card
 
 
 async def group_user_check_in(
-    nickname: str, user_qq: int, group: int
+    nickname: str, user_id: int, group: int
 ) -> MessageSegment:
     "Returns string describing the result of checking in"
     present = datetime.now()
-    async with db.transaction():
-        # 取得相应用户
-        user = await SignGroupUser.ensure(user_qq, group, for_update=True)
-        # 如果同一天签到过，特殊处理
-        if (
-            user.checkin_time_last + timedelta(hours=8)
-        ).date() >= present.date() or f"{user}_{group}_sign_{datetime.now().date()}" in os.listdir(
-            SIGN_TODAY_CARD_PATH
-        ):
-            gold = await BagUser.get_gold(user_qq, group)
-            return await get_card(user, nickname, -1, gold, "")
-        return await _handle_check_in(nickname, user_qq, group, present)  # ok
+    # 取得相应用户
+    user, is_create = await SignGroupUser.get_or_create(
+        user_id=str(user_id), group_id=str(group)
+    )
+    # 如果同一天签到过，特殊处理
+    if not is_create and (
+        user.checkin_time_last.date() >= present.date()
+        or f"{user}_{group}_sign_{datetime.now().date()}"
+        in os.listdir(SIGN_TODAY_CARD_PATH)
+    ):
+        gold = await BagUser.get_gold(user_id, group)
+        return await get_card(user, nickname, -1, gold, "")
+    return await _handle_check_in(nickname, user_id, group, present)  # ok
 
 
-async def check_in_all(nickname: str, user_qq: int):
+async def check_in_all(nickname: str, user_id: str):
     """
     说明:
         签到所有群
     参数:
         :param nickname: 昵称
-        :param user_qq: 用户qq
+        :param user_id: 用户id
     """
-    async with db.transaction():
-        present = datetime.now()
-        for u in await SignGroupUser.get_user_all_data(user_qq):
-            group = u.group_id
-            if not ((
-                u.checkin_time_last + timedelta(hours=8)
-            ).date() >= present.date() or f"{u}_{group}_sign_{datetime.now().date()}" in os.listdir(
-                SIGN_TODAY_CARD_PATH
-            )):
-                await _handle_check_in(nickname, user_qq, group, present)
+    present = datetime.now()
+    for u in await SignGroupUser.filter(user_id=user_id).all():
+        group = u.group_id
+        if not (
+            u.checkin_time_last.date() >= present.date()
+            or f"{u}_{group}_sign_{datetime.now().date()}"
+            in os.listdir(SIGN_TODAY_CARD_PATH)
+        ):
+            await _handle_check_in(nickname, user_id, group, present)
 
 
 async def _handle_check_in(
-    nickname: str, user_qq: int, group: int, present: datetime
+    nickname: str, user_id: str, group: str, present: datetime
 ) -> MessageSegment:
-    user = await SignGroupUser.ensure(user_qq, group, for_update=True)
-    impression_added = (secrets.randbelow(99)+1)/100
+    user, _ = await SignGroupUser.get_or_create(user_id=user_id, group_id=group)
+    impression_added = (secrets.randbelow(99) + 1) / 100
     critx2 = random.random()
-    add_probability = user.add_probability
+    add_probability = float(user.add_probability)
     specify_probability = user.specify_probability
     if critx2 + add_probability > 0.97:
         impression_added *= 2
     elif critx2 < specify_probability:
         impression_added *= 2
-    await SignGroupUser.sign(user, impression_added, present)
+    await SignGroupUser.sign(user, impression_added)
     gold = random.randint(1, 100)
-    gift, gift_type = random_event(user.impression)
+    gift, gift_type = random_event(float(user.impression))
     if gift_type == "gold":
-        await BagUser.add_gold(user_qq, group, gold + gift)
+        await BagUser.add_gold(user_id, group, gold + gift)
         gift = f"额外金币 + {gift}"
     else:
-        await BagUser.add_gold(user_qq, group, gold)
-        await BagUser.add_property(user_qq, group, gift)
-        gift += ' + 1'
+        await BagUser.add_gold(user_id, group, gold)
+        await BagUser.add_property(user_id, group, gift)
+        gift += " + 1"
+
+    logger.info(
+        f"(USER {user.user_id}, GROUP {user.group_id})"
+        f" CHECKED IN successfully. score: {user.impression:.2f} "
+        f"(+{impression_added:.2f}).获取金币：{gold + gift if gift == 'gold' else gold}"
+    )
     if critx2 + add_probability > 0.97 or critx2 < specify_probability:
-        logger.info(
-            f"(USER {user.user_qq}, GROUP {user.group_id})"
-            f" CHECKED IN successfully. score: {user.impression:.2f} "
-            f"(+{impression_added * 2:.2f}).获取金币：{gold + gift if gift == 'gold' else gold}"
-        )
         return await get_card(user, nickname, impression_added, gold, gift, True)
     else:
-        logger.info(
-            f"(USER {user.user_qq}, GROUP {user.group_id})"
-            f" CHECKED IN successfully. score: {user.impression:.2f} "
-            f"(+{impression_added:.2f}).获取金币：{gold + gift if gift == 'gold' else gold}"
-        )
         return await get_card(user, nickname, impression_added, gold, gift)
 
 
-async def group_user_check(nickname: str, user_qq: int, group: int) -> MessageSegment:
+async def group_user_check(nickname: str, user_id: str, group: str) -> MessageSegment:
     # heuristic: if users find they have never checked in they are probable to check in
-    user = await SignGroupUser.ensure(user_qq, group)
-    gold = await BagUser.get_gold(user_qq, group)
+    user, _ = await SignGroupUser.get_or_create(
+        user_id=str(user_id), group_id=str(group)
+    )
+    gold = await BagUser.get_gold(user_id, group)
     return await get_card(user, nickname, None, gold, "", is_card_view=True)
 
 
@@ -175,18 +175,16 @@ async def _pst(users: list, impressions: list, groups: list):
             impressions.pop(index)
             users.pop(index)
             groups.pop(index)
-            try:
-                user_name = (
-                    await GroupInfoUser.get_member_info(user, group)
-                ).user_name
-            except AttributeError:
+            if user_ := await GroupInfoUser.get_or_none(
+                user_id=str(user), group_id=str(group)
+            ):
+                user_name = user_.user_name
+            else:
                 user_name = f"我名字呢？"
             user_name = user_name if len(user_name) < 11 else user_name[:10] + "..."
             ava = await get_user_avatar(user)
             if ava:
-                ava = BuildImage(
-                    50, 50, background=BytesIO(ava)
-                )
+                ava = BuildImage(50, 50, background=BytesIO(ava))
             else:
                 ava = BuildImage(50, 50, color="white")
             ava.circle()

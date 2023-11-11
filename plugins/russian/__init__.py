@@ -1,20 +1,23 @@
+import asyncio
+import random
+import time
+from typing import Tuple
+
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import GROUP, Bot, GroupMessageEvent, Message
+from nonebot.params import ArgStr, Command, CommandArg
 from nonebot.typing import T_State
-from utils.utils import is_number, get_message_at
-from nonebot.params import CommandArg, Command, ArgStr
-from models.group_member_info import GroupInfoUser
-from utils.message_builder import at, image
-from .model import RussianUser
-from models.bag_user import BagUser
-from services.log import logger
-from .data_source import rank
-from configs.config import NICKNAME, Config
-from typing import Tuple
-import random
-import asyncio
-import time
 
+from configs.config import NICKNAME, Config
+from models.bag_user import BagUser
+from models.group_member_info import GroupInfoUser
+from services.log import logger
+from utils.image_utils import text2image
+from utils.message_builder import at, image
+from utils.utils import get_message_at, is_number
+
+from .data_source import rank
+from .model import RussianUser
 
 __zx_plugin_name__ = "俄罗斯轮盘"
 __plugin_usage__ = """
@@ -55,6 +58,7 @@ __plugin_configs__ = {
         "value": 1000,
         "help": "俄罗斯轮盘最大赌注金额",
         "default_value": 1000,
+        "type": int,
     }
 }
 
@@ -156,7 +160,9 @@ async def _(event: GroupMessageEvent):
         await accept.finish("又不是找你决斗，你拒绝什么啊！气！", at_sender=True)
     if rs_player[event.group_id]["at"] == event.user_id:
         at_player_name = (
-            await GroupInfoUser.get_member_info(event.user_id, event.group_id)
+            await GroupInfoUser.get_or_none(
+                user_id=str(event.user_id), group_id=str(event.group_id)
+            )
         ).user_name
         await accept.send(
             Message(f"{at(rs_player[event.group_id][1])}\n" f"{at_player_name}拒绝了你的对决！")
@@ -291,7 +297,7 @@ async def _(
         at_ = at_[0]
         try:
             at_player_name = (
-                await GroupInfoUser.get_member_info(at_, event.group_id)
+                await GroupInfoUser.get_or_none(user_id=at_, group_id=event.group_id)
             ).user_name
         except AttributeError:
             at_player_name = at(at_)
@@ -359,14 +365,14 @@ async def _(bot: Bot, event: GroupMessageEvent):
                     [
                         f"不要打扰 {player1_name} 和 {player2_name} 的决斗啊！",
                         f"给我好好做好一个观众！不然{NICKNAME}就要生气了",
-                        f"不要捣乱啊baka{(await GroupInfoUser.get_member_info(event.user_id, event.group_id)).user_name}！",
+                        f"不要捣乱啊baka{(await GroupInfoUser.get_or_none(user_id=event.user_id, group_id=event.group_id)).user_name}！",
                     ]
                 ),
                 at_sender=True,
             )
         await shot.finish(
             f"你的左轮不是连发的！该 "
-            f'{(await GroupInfoUser.get_member_info(int(rs_player[event.group_id]["next"]), event.group_id)).user_name} 开枪了'
+            f'{(await GroupInfoUser.get_or_none(user_id=int(rs_player[event.group_id]["next"]), group_id=event.group_id)).user_name} 开枪了'
         )
     if rs_player[event.group_id]["bullet"][rs_player[event.group_id]["index"]] != 1:
         await shot.send(
@@ -440,8 +446,12 @@ async def end_game(bot: Bot, event: GroupMessageEvent):
     await RussianUser.money(lose_user_id, event.group_id, "lose", money)
     await BagUser.add_gold(win_user_id, event.group_id, money - fee)
     await BagUser.spend_gold(lose_user_id, event.group_id, money)
-    win_user = await RussianUser.ensure(win_user_id, event.group_id)
-    lose_user = await RussianUser.ensure(lose_user_id, event.group_id)
+    win_user, _ = await RussianUser.get_or_create(
+        user_id=str(win_user_id), group_id=str(event.group_id)
+    )
+    lose_user, _ = await RussianUser.get_or_create(
+        user_id=str(lose_user_id), group_id=str(event.group_id)
+    )
     bullet_str = ""
     for x in rs_player[event.group_id]["bullet"]:
         bullet_str += "__ " if x == 0 else "| "
@@ -449,25 +459,33 @@ async def end_game(bot: Bot, event: GroupMessageEvent):
     rs_player[event.group_id] = {}
     await bot.send(
         event,
-        message=f"结算：\n"
-        f"\t胜者：{win_name}\n"
-        f"\t赢取金币：{money - fee}\n"
-        f"\t累计胜场：{win_user.win_count}\n"
-        f"\t累计赚取金币：{win_user.make_money}\n"
-        f"-------------------\n"
-        f"\t败者：{lose_name}\n"
-        f"\t输掉金币：{money}\n"
-        f"\t累计败场：{lose_user.fail_count}\n"
-        f"\t累计输掉金币：{lose_user.lose_money}\n"
-        f"-------------------\n"
-        f"哼哼，{NICKNAME}从中收取了 {float(rand)}%({fee}金币) 作为手续费！\n"
-        f"子弹排列：{bullet_str[:-1]}",
+        message=image(
+            await text2image(
+                f"结算：\n"
+                f"\t胜者：{win_name}\n"
+                f"\t赢取金币：{money - fee}\n"
+                f"\t累计胜场：{win_user.win_count}\n"
+                f"\t累计赚取金币：{win_user.make_money}\n"
+                f"-------------------\n"
+                f"\t败者：{lose_name}\n"
+                f"\t输掉金币：{money}\n"
+                f"\t累计败场：{lose_user.fail_count}\n"
+                f"\t累计输掉金币：{lose_user.lose_money}\n"
+                f"-------------------\n"
+                f"哼哼，{NICKNAME}从中收取了 {float(rand)}%({fee}金币) 作为手续费！\n"
+                f"子弹排列：{bullet_str[:-1]}",
+                padding=10,
+                color="#f9f6f2",
+            )
+        ),
     )
 
 
 @record.handle()
 async def _(event: GroupMessageEvent):
-    user = await RussianUser.ensure(event.user_id, event.group_id)
+    user, _ = await RussianUser.get_or_create(
+        user_id=str(event.user_id), group_id=str(event.group_id)
+    )
     await record.send(
         f"俄罗斯轮盘\n"
         f"总胜利场次：{user.win_count}\n"

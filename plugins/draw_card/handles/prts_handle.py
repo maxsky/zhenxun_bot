@@ -1,17 +1,17 @@
-import re
 import random
-import dateparser
-from lxml import etree
-from PIL import ImageDraw
-from bs4 import BeautifulSoup
+import re
 from datetime import datetime
-from urllib.parse import unquote
 from typing import List, Optional, Tuple
-from pydantic import ValidationError
-from nonebot.adapters.onebot.v11 import Message
-from utils.message_builder import image
+from urllib.parse import unquote
+
+import dateparser
+from PIL import ImageDraw
+from lxml import etree
+from nonebot.adapters.onebot.v11 import Message, MessageSegment
 from nonebot.log import logger
-import asyncio
+from pydantic import ValidationError
+
+from utils.message_builder import image
 
 try:
     import ujson as json
@@ -27,13 +27,15 @@ from utils.image_utils import BuildImage
 class Operator(BaseData):
     recruit_only: bool  # 公招限定
     event_only: bool  # 活动获得干员
+    core_only:bool  #中坚干员
     # special_only: bool  # 升变/异格干员
 
 
 class PrtsHandle(BaseHandle[Operator]):
     def __init__(self):
-        super().__init__("prts", "明日方舟", "#eff2f5")
+        super().__init__(game_name="prts", game_name_cn="明日方舟")
         self.max_star = 6
+        self.game_card_color = "#eff2f5"
         self.config = draw_config.prts
 
         self.ALL_OPERATOR: List[Operator] = []
@@ -41,8 +43,8 @@ class PrtsHandle(BaseHandle[Operator]):
 
     def get_card(self, add: float) -> Operator:
         star = self.get_star(
-            [6, 5, 4, 3],
-            [
+            star_list=[6, 5, 4, 3],
+            probability_list=[
                 self.config.PRTS_SIX_P + add,
                 self.config.PRTS_FIVE_P,
                 self.config.PRTS_FOUR_P,
@@ -53,7 +55,7 @@ class PrtsHandle(BaseHandle[Operator]):
         all_operators = [
             x
             for x in self.ALL_OPERATOR
-            if x.star == star and not any([x.limited, x.event_only, x.recruit_only])
+            if x.star == star and not any([x.limited, x.recruit_only, x.event_only,x.core_only])
         ]
         acquire_operator = None
 
@@ -74,7 +76,7 @@ class PrtsHandle(BaseHandle[Operator]):
             acquire_operator = random.choice(all_operators)
         return acquire_operator
 
-    def get_cards(self, count: int) -> List[Tuple[Operator, int]]:
+    def get_cards(self, count: int, **kwargs) -> List[Tuple[Operator, int]]:
         card_list = []  # 获取所有角色
         add = 0.0
         count_idx = 0
@@ -104,16 +106,18 @@ class PrtsHandle(BaseHandle[Operator]):
             info = f"当前up池: {self.UP_EVENT.title}\n{info}"
         return info.strip()
 
-    async def draw(self, count: int, **kwargs) -> Message:
-        return await asyncio.get_event_loop().run_in_executor(None, self._draw, count)
-
-    def _draw(self, count: int, **kwargs) -> Message:
+    def draw(self, count: int, **kwargs) -> Message:
         index2card = self.get_cards(count)
-        cards = [card[0] for card in self.get_cards(count)]
+        """这里cards修复了抽卡图文不符的bug"""
+        cards = [card[0] for card in index2card]
         up_list = [x.name for x in self.UP_EVENT.up_char] if self.UP_EVENT else []
         result = self.format_result(index2card, up_list=up_list)
         pool_info = self.format_pool_info()
-        return pool_info + image(b64=self.generate_img(cards).pic2bs4()) + result
+        return (
+            pool_info
+            + image(b64=self.generate_img(cards).pic2bs4())
+            + result
+        )
 
     def generate_card_img(self, card: Operator) -> BuildImage:
         sep_w = 5
@@ -148,11 +152,16 @@ class PrtsHandle(BaseHandle[Operator]):
             Operator(
                 name=value["名称"],
                 star=int(value["星级"]),
-                limited="干员寻访" not in value["获取途径"],
+                limited="标准寻访" not in value["获取途径"] and "中坚寻访" not in value["获取途径"],
                 recruit_only=True
-                if "干员寻访" not in value["获取途径"] and "公开招募" in value["获取途径"]
+                if "标准寻访" not in value["获取途径"] and "中坚寻访" not in value["获取途径"] and "公开招募" in value["获取途径"]
                 else False,
-                event_only=True if "活动获取" in value["获取途径"] else False,
+                event_only=True 
+                if "活动获取" in value["获取途径"] 
+                else False,
+                core_only=True
+                if "标准寻访" not in value["获取途径"] and "中坚寻访" in value["获取途径"]
+                else False,
             )
             for key, value in self.load_data().items()
             if "阿米娅" not in key
@@ -162,7 +171,11 @@ class PrtsHandle(BaseHandle[Operator]):
     def load_up_char(self):
         try:
             data = self.load_data(f"draw_card_up/{self.game_name}_up_char.json")
-            self.UP_EVENT = UpEvent.parse_obj(data.get("char", {}))
+            """这里的 waring 有点模糊，更新游戏信息时没有up池的情况下也会报错，所以细分了一下"""
+            if not data:
+                logger.warning(f"当前无UP池或 {self.game_name}_up_char.json 文件不存在")
+            else:
+                self.UP_EVENT = UpEvent.parse_obj(data.get("char", {}))
         except ValidationError:
             logger.warning(f"{self.game_name}_up_char 解析出错")
 
@@ -172,6 +185,7 @@ class PrtsHandle(BaseHandle[Operator]):
             self.dump_data(data, f"draw_card_up/{self.game_name}_up_char.json")
 
     async def _update_info(self):
+        """更新信息"""
         info = {}
         url = "https://wiki.biligame.com/arknights/干员数据表"
         result = await self.get_url(url)
@@ -185,14 +199,15 @@ class PrtsHandle(BaseHandle[Operator]):
                 avatar = char.xpath("./td[1]/div/div/div/a/img/@srcset")[0]
                 name = char.xpath("./td[2]/a/text()")[0]
                 star = char.xpath("./td[5]/text()")[0]
-                sources = str(char.xpath("./td[8]/text()")[0]).split("\n")
+                """这里sources修好了干员获取标签有问题的bug，如三星只能抽到卡缇就是这个原因"""
+                sources = [_.strip('\n') for _ in char.xpath("./td[8]/text()")]
             except IndexError:
                 continue
             member_dict = {
                 "头像": unquote(str(avatar).split(" ")[-2]),
                 "名称": remove_prohibited_str(str(name).strip()),
                 "星级": int(str(star).strip()),
-                "获取途径": [s for s in sources if s],
+                "获取途径": sources,
             }
             info[member_dict["名称"]] = member_dict
         self.dump_data(info)
@@ -208,6 +223,7 @@ class PrtsHandle(BaseHandle[Operator]):
         await self.update_up_char()
 
     async def update_up_char(self):
+        """重载卡池"""
         announcement_url = "https://ak.hypergryph.com/news.html"
         result = await self.get_url(announcement_url)
         if not result:
@@ -221,55 +237,72 @@ class PrtsHandle(BaseHandle[Operator]):
         end_time = None
         up_chars = []
         pool_img = ""
-        title = ""
-        for activity_url in activity_urls:
+        for activity_url in activity_urls[:10]:  # 减少响应时间, 10个就够了
             activity_url = f"https://ak.hypergryph.com{activity_url}"
             result = await self.get_url(activity_url)
             if not result:
                 logger.warning(f"{self.game_name_cn}获取公告 {activity_url} 出错")
                 continue
-            soup = BeautifulSoup(result, "lxml")
-            contents = soup.find_all("p")
+
+            """因为鹰角的前端太自由了，这里重写了匹配规则以尽可能避免因为前端乱七八糟而导致的重载失败"""
+            dom = etree.HTML(result, etree.HTMLParser())
+            contents = dom.xpath(
+                "//div[@class='article-content']/p/text() | //div[@class='article-content']/p/span/text() | //div[@class='article-content']/div[@class='media-wrap image-wrap']/img/@src"
+            )
+            title = ""
+            time = ""
+            chars: List[str] = []
             for index, content in enumerate(contents):
-                if re.search("(.*)(寻访|复刻).*?开启", content.text):
-                    title = content.text
-                    if "【" in title and "】" in title:
-                        title = re.split(r"[【】]", title)[1]
-                    lines = [str(contents[index + i + 1].text) for i in range(5)]
-                    time = ""
-                    chars: List[str] = []
-                    for line in lines:
+                if re.search("(.*)(寻访|复刻).*?开启", content):
+                    title = re.split(r"[【】]", content)
+                    title = "".join(title[1:-1]) if "-" in title else title[1]
+                    lines = [contents[index-2+_] for _ in range(8)]  # 从 -2 开始是因为xpath获取的时间有的会在寻访开启这一句之前
+                    lines.append("")  # 防止IndexError，加个空字符串
+                    for idx, line in enumerate(lines):
                         match = re.search(
                             r"(\d{1,2}月\d{1,2}日.*?-.*?\d{1,2}月\d{1,2}日.*?$)", line
                         )
                         if match:
                             time = match.group(1)
-                        if "★" in line:
-                            chars.append(line)
+                        """因为 <p> 的诡异排版，所以有了下面的一段"""
+                        if ("★★" in line and "%" in line) or ("★★" in line and "%" in lines[idx + 1]):
+                            chars.append(line) if ("★★" in line and "%" in line) else chars.append(line + lines[idx + 1])
                     if not time:
                         continue
-                    start, end = time.replace("月", "/").replace("日", "").split("-")[:2]
+                    start, end = time.replace("月", "/").replace("日", " ").split("-")[:2]  # 日替换为空格是因为有日后面不接空格的情况，导致 split 出问题
                     start_time = dateparser.parse(start)
                     end_time = dateparser.parse(end)
-                    pool_img = content.find_previous("img")["src"]
+                    pool_img = contents[index-2]
+                    r"""两类格式：用/分割，用\分割；★+(概率)+名字，★+名字+(概率)"""
                     for char in chars:
                         star = char.split("（")[0].count("★")
-                        name = re.split(r"[：（]", char)[1]
-                        names = name.split("/") if "/" in name else [name]
+                        name = re.split(r"[：（]", char)[1] if "★（" not in char else re.split("）：", char)[1]  # 有的括号在前面有的在后面
+                        dual_up = False
+                        if "\\" in name:
+                            names = name.split("\\")
+                            dual_up = True
+                        elif "/" in name:
+                            names = name.split("/")
+                            dual_up = True
+                        else:
+                            names = [name]  # 既有用/分割的，又有用\分割的
+
                         names = [name.replace("[限定]", "").strip() for name in names]
+                        zoom = 1
                         if "权值" in char:
-                            match = re.search(r"（在.*?以.*?(\d+).*?倍权值.*?）", char)
+                            zoom = 0.03
                         else:
                             match = re.search(r"（占.*?的.*?(\d+).*?%）", char)
-                        zoom = 1
-                        if match:
-                            zoom = float(match.group(1))
-                            zoom = zoom / 100 if zoom > 10 else zoom
+                            if dual_up == True:
+                                zoom = float(match.group(1))/2
+                            else:
+                                zoom = float(match.group(1))
+                            zoom = zoom / 100 if zoom > 1 else zoom
                         for name in names:
                             up_chars.append(
                                 UpChar(name=name, star=star, limited=False, zoom=zoom)
                             )
-                    break
+                    break  # 这里break会导致个问题：如果一个公告里有两个池子，会漏掉下面的池子，比如 5.19 的定向寻访。但目前我也没啥好想法解决
             if title and start_time and end_time:
                 if start_time <= datetime.now() <= end_time:
                     self.UP_EVENT = UpEvent(
@@ -287,6 +320,6 @@ class PrtsHandle(BaseHandle[Operator]):
         await self.update_up_char()
         self.load_up_char()
         if self.UP_EVENT:
-            return f"重载成功！\n当前UP池子：{self.UP_EVENT.title}" + image(
+            return f"重载成功！\n当前UP池子：{self.UP_EVENT.title}" + MessageSegment.image(
                 self.UP_EVENT.pool_img
             )
